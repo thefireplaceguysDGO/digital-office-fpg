@@ -31,12 +31,18 @@ The sandbox does not outlive its session, so its identity comes from two environ
 (`GET /api/office-key` → `authorize_command`) — the share is installed through that access. Any other
 machine vps1 owns is shared the same way by its id. Revoke: `./bbox computers share revoke <share-id>`.
 
-## Every cloud session
+## Every cloud session — nothing to type
+
+`.claude/hooks/session-start.sh` does it, detached, when both secrets are set (silent otherwise),
+logging to `/tmp/claude-cloud-office.log`:
 
 ```bash
 ./bbox run
 ./bbox computers share attach "$FPG_VPS1_DOOR" root vps1          # vps1 joins this office's fleet
-./bbox computers ssh <vps1-id> 'cd <checkout> && ./bbox status'   # or no command: a shell
+./bbox computers ssh vps1 'hostname; uptime'                       # the proof it ends with
 ```
+
+A copy of `COMPUTERS_SHARE_KEY` is kept on vps1 at `/root/.claude-cloud/share-key.b64` (root, 600),
+so the secret can be re-installed without the key ever passing through a chat.
 
 Then `/api/computers/<id>/exec` and `/stream` work on vps1 as on any machine of the fleet.
