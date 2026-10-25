@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#: ssh — a shell (or one command) on a fleet computer, with the office's own key and route: <computer-id|local> [command…]
+#: ssh — a shell (or one command) on a fleet computer, with the office's own key and route: <computer-id|label|local> [command…]
 #
 # The same connection /exec makes — same key, same pinned host key, and for a SHARED computer the
 # same door — but attached to this terminal, so a long or interactive job is not bound by /exec's
@@ -24,6 +24,11 @@ exec docker exec "${TTY[@]}" -w /app "${CONTAINER}" python3 -c '
 import os, sys
 import app
 cid, cmd = sys.argv[1], " ".join(sys.argv[2:])
+insts, _ = app.vault_list()
+# an id, or a label that names exactly one machine (`ssh vps1`)
+named = [i["id"] for i in insts if i.get("label") == cid]
+if not any(i.get("id") == cid for i in insts) and len(named) == 1:
+    cid = named[0]
 rec, bad = app._resolve(cid, app.local_gateway())
 if bad:
     sys.exit(bad.body.decode())
