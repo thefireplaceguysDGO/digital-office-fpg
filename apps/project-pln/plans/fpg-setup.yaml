@@ -1,0 +1,61 @@
+# apps/project-pln/plans/fpg-setup.yaml — finishing the setup of The Fireplace Guys' office (vps1),
+# rendered into Plane by `./bbox project-pln plan fpg-setup` (hooks/plan → plan.py; upsert, never delete).
+#
+# FPG has ONE office: the DGO on its VPS (deployment `fireplace`, fpg.digital-office.co.il). It is a
+# separate company from the office this tree was exported from; these items remove what still ties
+# it to that office and give it its own identity.
+# Keys (fpg-001, …) are stable identities: rename freely, never re-key, never reuse.
+
+project:
+  identifier: FPG
+  name: FPG Setup
+  description: "Finishing the setup of The Fireplace Guys' office on its VPS — its own identity, its own address, nothing left of another company's office."
+  network: 0
+
+defaults:
+  assignee: ""
+
+labels:
+  - { name: infra,    color: "#a16207" }
+  - { name: security, color: "#0ea5e9" }
+  - { name: docs,     color: "#64748b" }
+
+modules:
+- key: fpg-separate
+  name: Separate FPG's office
+  status: in-progress
+  description: "The VPS and this repo still carry another company's office: a link plan it wrote, its business name, its machines in the docs. Each item removes one of them."
+  items:
+  - key: fpg-001
+    name: "Remove the stale `rendered_by: macbook` link plan from vps1 (after a backup)"
+    priority: high
+    labels: [security, infra]
+    description: |
+      What: `/tunnel/link-proxy.json` inside `dgo-extend-fireplace` holds link rules (door, dgo-extend catalog, tunnel addresses 10.79.6.x) stamped `rendered_by: macbook` — written by an office that is not FPG's. There is no live pair (`/api/link` → items: [], pairs: {}), but the plan is still kept and was re-stamped 2026-10-25 10:57 UTC.
+      Do: back up the file; find why dgo-extend keeps re-rendering it (`linkproxy.keep_shipped`, apps/dgo-extend/app.py); remove it so the office ships no rule for a peer it does not have.
+      Done when: `/api/link` shows no proxy rule naming another office, and it stays gone after a restart of dgo-extend.
+  - key: fpg-002
+    name: "Set FPG's own identity: BUSINESS_NAME and the office's public address"
+    priority: high
+    labels: [infra]
+    description: |
+      What: vps1's `.env` says `BUSINESS_NAME=Hacohen` (also in the `.env.before-rename-*` backups), and dgo-extend records the office's domain as `localhost` with no endpoint, while `DEPLOYMENT_DOMAIN=fpg.digital-office.co.il`.
+      Do: set BUSINESS_NAME to FPG's name (everything else derives from it — see GO-LIVE.md §0); set the office's domain/endpoint to fpg.digital-office.co.il; re-render and confirm nothing that derives from the name changed unexpectedly (mail identity, slugs).
+      Also: FPG's Plane workspace slug is `bina` (PLANE_LOCAL_WORKSPACE is unset, so hooks/plan falls back to it) — give it FPG's own slug.
+      Done when: `./bbox dgo` shows home `fireplace` at fpg.digital-office.co.il, and no live config names Hacohen or bina.
+  - key: fpg-003
+    name: Remove the other company's machine names and addresses from FPG's repo
+    priority: medium
+    labels: [docs, security]
+    description: |
+      What: the tree is a snapshot of another company's development branch and still describes its offices — e.g. apps/dgo-extend/SECOND-OFFICE.md (machine names, LAN addresses 192.168.16.x, an SSH user), ai/context/core-native-plan.md (hp-dgo), comments in platform/manager/reconcile.py and serve.py (`bina.macbook`), and apps/project-pln/plans/office.yaml (5,300 lines of that owner's extracted messages).
+      Do: list every occurrence (`git grep -nE 'macbook|hp-laptop|hp-dgo|192\.168\.16\.|shlomo|azaria'`), then rewrite or remove each — code comments keep their meaning with neutral names.
+      Done when: that grep returns nothing that names a machine, person or address of another office.
+  - key: fpg-004
+    name: Decide on the five uncommitted edits in vps1's checkout
+    priority: medium
+    labels: [infra]
+    description: |
+      What: /opt/digital-office/fireplace is on branch `vps1-dgo` at 1b92703 with uncommitted edits to: .github/workflows/ci-verify.yml, apps/n8n/hooks/pull, bbox, scripts/ci/gates.sh, scripts/refactor/GATES.md.
+      Do: review the diff; commit what is wanted (and bring it into this repo), stash or drop the rest — never lose an edit without a backup.
+      Done when: `git status` on vps1 is clean and its commit is one this repo knows.
