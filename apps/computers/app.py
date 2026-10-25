@@ -34,6 +34,7 @@ GATEWAY of the `traefik-network` bridge, read from the engine at startup rather 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -45,7 +46,7 @@ import time
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -404,6 +405,8 @@ def computer_record(inst: dict, host: str) -> dict:
             "host": sec.get("host"), "port": int(sec.get("port") or 22),
             "user": sec.get("user") or "root",
             "has_own_key": bool(sec.get("private_key")),
+            # lent by another office, reached through its door (the door's token is never shown)
+            "shared": bool(sec.get("door")),
             "builtin": False, "removable": True}
 
 
@@ -427,6 +430,17 @@ SSH_BASE = [
 def _known_hosts_opt() -> list[str]:
     KEY_DIR.mkdir(parents=True, exist_ok=True)
     return ["-o", f"UserKnownHostsFile={KNOWN_HOSTS}"]
+
+
+def _door_opts(cid: str, secret: dict) -> list[str]:
+    """A computer another office SHARED with this one is reached through its door (share.py), with
+    ssh's host key pinned under the instance id — the door's hostname is the lender's, not the
+    machine's, and two machines lent by one office must not share a known_hosts line."""
+    door = (secret.get("door") or "").strip()
+    if not door:
+        return []
+    return ["-o", f"ProxyCommand=python3 {Path(__file__).parent / 'door_client.py'} {door}",
+            "-o", f"HostKeyAlias={cid}"]
 
 
 # The remote probe: ONE round trip, and no dependency on anything but sh and /proc. The far side is
@@ -499,7 +513,8 @@ def ssh_argv(cid: str, host: str, port: int, user: str, secret: dict,
     same pinned host key, same BatchMode — because a copy that used a looser connection would be a
     second answer to "how do we reach a machine", and the loose one is the one that drifts.
     """
-    return ["ssh", *SSH_BASE, *_known_hosts_opt(), "-i", _key_path_for({**secret, "_instance": cid}),
+    return ["ssh", *SSH_BASE, *_known_hosts_opt(), *_door_opts(cid, secret),
+            "-i", _key_path_for({**secret, "_instance": cid}),
             "-p", str(int(port or 22)),
             "-o", f"ConnectTimeout={min(8, max(3, int(timeout or 8)))}",
             f"{user}@{host}", command]
@@ -520,7 +535,8 @@ def ssh_run(cid: str, host: str, port: int, user: str, secret: dict,
         return {"code": 255, "stdout": "", "stderr": "", "timed_out": False, "state": "needs_action",
                 "reason": "לא נוצר עדיין מפתח SSH ללשכה",
                 "action": "רענן את הדף — המפתח נוצר אוטומטית עם עליית השירות."}
-    cmd = (["ssh", *SSH_BASE, *_known_hosts_opt(), "-i", key, "-p", str(int(port or 22)),
+    cmd = (["ssh", *SSH_BASE, *_known_hosts_opt(), *_door_opts(cid, secret), "-i", key,
+            "-p", str(int(port or 22)),
             "-o", f"ConnectTimeout={min(8, max(3, int(timeout or 8)))}",
             f"{user}@{host}", command])
     started = time.time()
@@ -879,6 +895,14 @@ async def api_computers_post(request: Request):
     host = (body.get("host") or "").strip()
     user = (body.get("user") or "root").strip() or "root"
     label = (body.get("label") or "").strip()
+    door = (body.get("door") or "").strip()
+    if door:
+        # A computer another office shared with this one: its address IS the door the lender
+        # printed (POST /api/computers/<id>/shares there). The host is the door's, for display.
+        m = re.match(r"^wss?://([A-Za-z0-9.-]+(?::\d+)?)/share/[A-Za-z0-9_-]{32,}$", door)
+        if not m:
+            return _err("הדלת אינה כתובת שיתוף תקינה (wss://<host>/share/<token>)", 400)
+        host = host or m.group(1).split(":")[0]
     if not host:
         return _err("חסרה כתובת (host)", 400)
     if re.search(r"[\s;|&$`'\"]", host) or host.startswith("-"):
@@ -890,9 +914,11 @@ async def api_computers_post(request: Request):
     if not (1 <= port <= 65535):
         return _err("הפורט מחוץ לטווח", 400)
     secret = {"host": host, "port": port, "user": user}
+    if door:
+        secret["door"] = door
     if (body.get("private_key") or "").strip():
         secret["private_key"] = body["private_key"]
-    if host == local_gateway() and user == LOCAL_USER and port == LOCAL_PORT:
+    if not door and host == local_gateway() and user == LOCAL_USER and port == LOCAL_PORT:
         # The machine we are running on is BUILT IN and already registered — adding it again would
         # create a second row for one machine, which is exactly the drift the local instance exists
         # to prevent.
@@ -904,9 +930,11 @@ async def api_computers_post(request: Request):
     cid = res.get("id")
     forget_secret(cid)
     log.info("computer added: %s (%s@%s:%s)", cid, user, host, port)
-    st = probe(cid, host, port, user, secret, max_age=0)
+    # off the event loop, like /exec: a probe is an SSH round trip, and a shared computer's round
+    # trip may come back through this very app's door
+    st = await run_in_threadpool(probe, cid, host, port, user, secret, max_age=0)
     return {"id": cid, "label": label or f"{user}@{host}", "host": host, "port": port, "user": user,
-            "status": "ok", "removable": True, "builtin": False, "probe": st}
+            "status": "ok", "removable": True, "builtin": False, "shared": bool(door), "probe": st}
 
 
 @app.delete("/api/computers/{cid}")
@@ -1074,6 +1102,122 @@ async def api_authorize_command(cid: str):
             "command": (f"mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
                         f"echo '{pub}' >> ~/.ssh/authorized_keys && "
                         f"chmod 600 ~/.ssh/authorized_keys")}
+
+
+# ── sharing a computer with another office (share.py) ─────────────────────────────
+def _public_host() -> str:
+    """The host the door is reached at from outside: this app's own public host."""
+    v = os.environ.get("COMPUTERS_PUBLIC_HOST", "").strip()
+    return re.sub(r"^https?://", "", v).rstrip("/") or "computers.localhost"
+
+
+@app.post("/api/computers/{cid}/shares")
+async def api_share_create(cid: str, request: Request):
+    """Lend this computer to another office: `{to, public_key}` → the door, shown ONCE.
+
+    `public_key` is the BORROWING office's office key (its GET /api/office-key). It is put in the
+    machine's authorized_keys through this office's own access — so a machine is shareable exactly
+    when this office can already reach it, the built-in host included."""
+    import share
+    body = (await request.json()) if await request.body() else {}
+    body = body or {}
+    to = (body.get("to") or "").strip()
+    blob = share.key_blob(body.get("public_key") or "")
+    if not share.TO_RE.match(to):
+        return _err("חסר שם הלשכה שמקבלת את השיתוף (to): אותיות, ספרות, ._-", 400)
+    if not blob:
+        return _err("המפתח הציבורי אינו תקין (ssh-ed25519 …)", 400)
+    rec, bad = _resolve(cid, local_gateway())
+    if bad:
+        return bad
+    if rec.get("shared"):
+        return _err("מחשב ששותף עם הלשכה הזאת אינו ניתן לשיתוף הלאה", 409)
+    sec, _ = _computer_ctx(rec, local_gateway())
+    sid = share.new_id()
+    res = await run_in_threadpool(ssh_run, cid, rec["host"], rec["port"], rec["user"], sec,
+                                  share.authorize_command(sid, to, blob), 30)
+    if res.get("code") != 0:
+        return _err("לא ניתן היה להוסיף את המפתח במחשב", 502, reason=res.get("reason"),
+                    action=res.get("action"), stderr=(res.get("stderr") or "")[:1000])
+    row, token = share.create(STATE_DIR, sid, cid, to, blob)
+    log.info("computer %s shared with %s as %s", cid, to, sid)
+    return {"share": row, "user": rec["user"], "door": f"wss://{_public_host()}/share/{token}",
+            "note": "הדלת מוצגת פעם אחת בלבד. בלשכה המקבלת: POST /api/computers "
+                    "{\"door\": …, \"user\": …, \"label\": …}"}
+
+
+@app.get("/api/shares")
+def api_shares(computer: str = ""):
+    import share
+    return {"shares": share.rows(STATE_DIR, computer or None)}
+
+
+@app.delete("/api/shares/{sid}")
+async def api_share_revoke(sid: str):
+    """Revoke a share: the borrower's key leaves the machine, then the door closes."""
+    import share
+    row = share.get(STATE_DIR, sid)
+    if not row:
+        return _err("אין שיתוף כזה", 404)
+    rec, bad = _resolve(row["computer"], local_gateway())
+    removed = False
+    if not bad:
+        sec, _ = _computer_ctx(rec, local_gateway())
+        res = await run_in_threadpool(ssh_run, rec["id"], rec["host"], rec["port"], rec["user"], sec,
+                                      share.revoke_command(sid), 30)
+        removed = res.get("code") == 0
+    share.drop(STATE_DIR, sid)
+    log.info("share %s revoked (key removed from the machine: %s)", sid, removed)
+    return {"ok": True, "id": sid, "key_removed": removed,
+            **({} if removed else {"warning": "הדלת נסגרה, אך המפתח לא הוסר מהמחשב — הסר את השורה "
+                                              f"'{share.TAG}:{sid}:' מ־authorized_keys"})}
+
+
+@app.websocket("/share/{token}")
+async def share_door(ws: WebSocket, token: str):
+    """The door: one SSH connection, relayed byte for byte to the shared machine's sshd."""
+    import share
+    row = share.find(STATE_DIR, token)
+    rec = None
+    if row:
+        rec, _ = await run_in_threadpool(_resolve, row["computer"], local_gateway())
+    if not rec:
+        await ws.close(code=1008)
+        return
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(rec["host"], int(rec["port"] or 22)), 10)
+    except (OSError, asyncio.TimeoutError) as e:
+        log.warning("share %s: %s:%s unreachable: %s", row["id"], rec["host"], rec["port"], e)
+        await ws.close(code=1011)
+        return
+    await ws.accept()
+    log.info("share %s: open (%s → %s)", row["id"], row.get("to"), row["computer"])
+
+    async def up():
+        try:
+            while True:
+                writer.write(await ws.receive_bytes())
+                await writer.drain()
+        except (WebSocketDisconnect, RuntimeError, KeyError):
+            pass
+
+    async def down():
+        while chunk := await reader.read(65536):
+            await ws.send_bytes(chunk)
+
+    tasks = [asyncio.create_task(up()), asyncio.create_task(down())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for t in tasks:
+            t.cancel()
+        writer.close()
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
+        log.info("share %s: closed", row["id"])
 
 
 @app.post("/api/computers/{cid}/probe")
@@ -1361,7 +1505,16 @@ def _startup() -> None:
     _chmod(KEY_DIR, 0o700)
     ensure_key()
     host = local_gateway()
-    vault_ensure_local(host, LOCAL_USER, LOCAL_PORT)
+    # Until the vault answers, not once: this app and `connections` start together, and a single
+    # attempt that met "connection refused" left the office's own machine out of the fleet until the
+    # next restart (measured 2026-10-25 on a fresh cloud office: `{"computers": []}`).
+    def ensure_local_until_ready() -> None:
+        for _ in range(100):
+            if not vault_list()[1]:
+                vault_ensure_local(host, LOCAL_USER, LOCAL_PORT)
+                return
+            time.sleep(3)
+    threading.Thread(target=ensure_local_until_ready, daemon=True).start()
     log.info("computers ready — built-in machine %s@%s:%s, office key %s",
              LOCAL_USER, host, LOCAL_PORT, key_fingerprint() or "(none)")
 

@@ -133,6 +133,7 @@ map and does not read this tree at all.
 | Need | Source |
 |---|---|
 | Operating rules for agents | [AGENTS.md](AGENTS.md) |
+| **The FPG herd** — vps1 (main office) and the Claude cloud office that operates it over HTTPS | [ai/context/fpg-herd.md](ai/context/fpg-herd.md) |
 | **Porting the simulation into the live platform** | [digital-office/sim/PORT-PLAN.md](digital-office/sim/PORT-PLAN.md) — ordered phases, acceptance per item, and how to prove parity (`flow-qa.py --url <live>`) |
 | Fresh-baseline proof + environment caveats | [ai/context/healthy-baseline.md](ai/context/healthy-baseline.md) |
 | Services, domains, ports, networks, run commands | [ai/context/deployment-context.txt](ai/context/deployment-context.txt) |

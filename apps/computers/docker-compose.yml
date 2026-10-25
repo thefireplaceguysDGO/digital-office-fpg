@@ -40,6 +40,23 @@ services:
       - COMPUTERS_LOCAL_PORT=${COMPUTERS_LOCAL_PORT:-22}
       - COMPUTERS_PROBE_TTL=${COMPUTERS_PROBE_TTL:-20}
       - COMPUTERS_STATE_DIR=/data
+      # the host another office reaches a SHARED computer's door at (share.py)
+      - COMPUTERS_PUBLIC_HOST=${COMPUTERS_BASE_URL:-computers.${DEPLOYMENT_DOMAIN:-localhost}}
+    labels:
+      # THE SHARE DOOR (/share/<token>) — no authentik, by design: the caller is another office's
+      # ssh, which cannot sign in. The token opens the stream and sshd's key check authenticates;
+      # every other path on this host stays behind the gated routers the compiler emits
+      # (manifest: auth_exclude ["/share/"]). Higher priority so it wins over the gated rule.
+      - traefik.http.routers.computers-share.rule=(Host(`computers.localhost`) || Host(`${COMPUTERS_BASE_URL:-computers.${DEPLOYMENT_DOMAIN:-localhost}}`)) && PathPrefix(`/share/`)
+      - traefik.http.routers.computers-share.entrypoints=web
+      - traefik.http.routers.computers-share.priority=200
+      - traefik.http.routers.computers-share.service=computers
+      - traefik.http.routers.computers-share-https.rule=Host(`${COMPUTERS_BASE_URL:-computers.${DEPLOYMENT_DOMAIN:-localhost}}`) && PathPrefix(`/share/`)
+      - traefik.http.routers.computers-share-https.entrypoints=websecure
+      - traefik.http.routers.computers-share-https.tls=true
+      - traefik.http.routers.computers-share-https.tls.certresolver=myresolver
+      - traefik.http.routers.computers-share-https.priority=200
+      - traefik.http.routers.computers-share-https.service=computers
     volumes:
       # the office keypair, known_hosts and the probe cache — losing this volume means re-approving
       # the key on every machine, so it is kept (data.on_uninstall: prompt)

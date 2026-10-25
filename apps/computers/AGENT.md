@@ -52,6 +52,16 @@ How it behaves, and the three things an `ok` means:
 - `ok` = the staging file reached the measured total, its bytes matched the source's own `tar`
   byte-for-byte, and it extracted. Fewer than all three is reported as a failure, not as "mostly done".
 
+## Sharing a computer with another office — `shares`
+
+Any machine this office reaches (the built-in host too) can be lent to another office over HTTPS —
+for an office whose only egress is HTTPS (the Claude cloud office). Lender:
+`POST /api/computers/<id>/shares {"to","public_key"}` (the borrower's `GET /api/office-key`) puts
+that key, tagged `computers-share:<sid>:`, in the machine's authorized_keys and returns `door`
+(`wss://<this host>/share/<token>`) ONCE. Borrower: `POST /api/computers {"door","user","label"}`;
+exec/probe/stream then go through the door. `GET /api/shares`, `DELETE /api/shares/<sid>` (removes
+the key, closes the door). CLI: `./bbox computers share …`, `./bbox computers ssh <id> [cmd]`.
+
 ## Traps
 
 - **Only machines in `GET /api/computers` exist.** Never construct a host from memory, and never

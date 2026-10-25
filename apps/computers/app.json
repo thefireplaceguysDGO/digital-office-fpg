@@ -49,6 +49,9 @@
       "host": "computers",
       "port": 8977,
       "auth": "sso",
+      "auth_exclude": [
+        "/share/"
+      ],
       "module": {
         "group": "תשתית",
         "icon": "monitor",
