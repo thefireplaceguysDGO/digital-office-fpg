@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#: door — reach a SHARED computer straight through its door, with no stack running: [alias] [command…]
+#
+#   ./bbox computers door                       # vps1: hostname + uptime, in seconds
+#   ./bbox computers door vps1 'cd /opt/digital-office && ./bbox status'
+#   ssh vps1                                    # afterwards: the same route, from any tool
+#
+# The fast path beside `share attach`: the same door and the same key — FPG_VPS1_DOOR (or
+# SSH_DOOR_URL) and COMPUTERS_SHARE_KEY — but ssh runs HERE with door_client.py as its ProxyCommand,
+# so it needs neither docker nor the computers container. It writes `Host <alias>` into
+# ~/.ssh/config, so `ssh`, `scp` and `rsync -e ssh` work too.
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ALIAS="${1:-vps1}"; shift || true
+DOOR="${SSH_DOOR_URL:-${FPG_VPS1_DOOR:-}}"
+[ -n "${DOOR}" ] || { echo "no door: set FPG_VPS1_DOOR (wss://<lender>/share/<token>)" >&2; exit 2; }
+[ -n "${COMPUTERS_SHARE_KEY:-}" ] || { echo "no key: set COMPUTERS_SHARE_KEY" >&2; exit 2; }
+command -v ssh >/dev/null 2>&1 || apt-get install -y -q openssh-client >/dev/null 2>&1 \
+  || { echo "no ssh client, and it could not be installed" >&2; exit 2; }
+python3 -c 'import websockets.asyncio.client' 2>/dev/null || pip install -q 'websockets>=15' >/dev/null 2>&1 \
+  || { echo "python websockets>=15 is missing and could not be installed" >&2; exit 2; }
+
+install -d -m 700 "${HOME}/.ssh"
+KEY="${HOME}/.ssh/computers-share_${ALIAS}"
+( umask 077; printf '%s' "${COMPUTERS_SHARE_KEY}" | python3 "${HERE}/tools/pem.py" >"${KEY}" )
+CONF="${HOME}/.ssh/config"; touch "${CONF}"; chmod 600 "${CONF}"
+python3 - "${CONF}" "${ALIAS}" "${KEY}" "${HERE}/door_client.py" "${DOOR}" "${SSH_DOOR_USER:-root}" <<'PY'
+import re, sys
+conf, alias, key, client, door, user = sys.argv[1:]
+begin, end = f"# >>> computers-share {alias}", f"# <<< computers-share {alias}"
+block = (f"{begin}\nHost {alias}\n  HostName {alias}\n  User {user}\n  IdentityFile {key}\n"
+         f"  IdentitiesOnly yes\n  BatchMode yes\n  HostKeyAlias {alias}\n"
+         f"  ProxyCommand python3 {client} {door}\n  ServerAliveInterval 20\n"
+         f"  StrictHostKeyChecking accept-new\n{end}\n")
+text = re.sub(re.escape(begin) + r".*?" + re.escape(end) + r"\n?", "", open(conf).read(), flags=re.S)
+open(conf, "w").write(block + text)
+PY
+[ "$#" -gt 0 ] || set -- 'hostname; uptime'
+exec ssh "${ALIAS}" "$@"

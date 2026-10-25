@@ -33,13 +33,16 @@ machine vps1 owns is shared the same way by its id. Revoke: `./bbox computers sh
 
 ## Every cloud session — nothing to type
 
-`.claude/hooks/session-start.sh` does it, detached, when both secrets are set (silent otherwise),
-logging to `/tmp/claude-cloud-office.log`:
+`.claude/hooks/session-start.sh` does it when both secrets are set (silent otherwise), in two paths
+that both log to `/tmp/claude-cloud-office.log`:
 
 ```bash
+# FAST — before the session starts, in ~2 s, no docker: ssh straight through the door
+./bbox computers door vps1 'hostname; uptime'      # → "FAST — vps1 answered …"; then plain `ssh vps1`
+# FULL — detached, one at a time (a lock): the cloud office itself, with vps1 in its fleet
 ./bbox run
-./bbox computers share attach "$FPG_VPS1_DOOR" root vps1          # vps1 joins this office's fleet
-./bbox computers ssh vps1 'hostname; uptime'                       # the proof it ends with
+./bbox computers share attach "$FPG_VPS1_DOOR" root vps1
+./bbox computers ssh vps1 'hostname; uptime'       # → "FULL — the cloud office reaches vps1"
 ```
 
 A copy of `COMPUTERS_SHARE_KEY` is kept on vps1 at `/root/.claude-cloud/share-key.b64` (root, 600),

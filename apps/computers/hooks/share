@@ -40,11 +40,8 @@ case "${VERB}" in
           # An office that does not outlive its session (a cloud sandbox) cannot keep its minted key:
           # COMPUTERS_SHARE_KEY (a private key, e.g. an environment secret) is then the machine's own
           # key, the one whose public half was shared. Newlines flattened by a secret store are restored.
-          KEY="$(printf '%s' "${COMPUTERS_SHARE_KEY:-}" | sed 's/\\n/\n/g' | python3 -c '
-import re, sys
-s = sys.stdin.read().strip()
-m = re.match(r"(-----BEGIN [A-Z ]+-----)(.*?)(-----END [A-Z ]+-----)", s, re.S)
-print(m.group(1) + "\n" + "\n".join(m.group(2).split()) + "\n" + m.group(3) if m else s)')"
+          KEY=""
+          [ -z "${COMPUTERS_SHARE_KEY:-}" ] || KEY="$(printf '%s' "${COMPUTERS_SHARE_KEY}" | python3 "$(dirname "$0")/../tools/pem.py")"
           if [ -n "${KEY}" ]; then
             api POST /api/computers "$(json door "$2" user "${3:-root}" label "${4:-}" private_key "${KEY}")"
           else

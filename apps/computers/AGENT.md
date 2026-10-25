@@ -60,7 +60,7 @@ for an office whose only egress is HTTPS (the Claude cloud office). Lender:
 that key, tagged `computers-share:<sid>:`, in the machine's authorized_keys and returns `door`
 (`wss://<this host>/share/<token>`) ONCE. Borrower: `POST /api/computers {"door","user","label"}`;
 exec/probe/stream then go through the door. `GET /api/shares`, `DELETE /api/shares/<sid>` (removes
-the key, closes the door). CLI: `./bbox computers share …`, `./bbox computers ssh <id> [cmd]`.
+the key, closes the door). CLI: `./bbox computers share …`, `ssh <id|label> [cmd]`, `door` (no stack: ssh via the door).
 
 ## Traps
 
