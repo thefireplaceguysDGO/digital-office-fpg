@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=./schema.json
+title: The FPG office's home screen shows ONE tile («הגדרות מסוף») — the console silently falls back when its compiled registry is missing
+opened: '2026-10-29'
+category: bug
+severity: high
+status: open
+summary: |-
+  On the live FPG office (console.fpg.digital-office.co.il, phone, 2026-10-29 17:38) the home screen
+  reads «אפליקציה אחת מותקנת» and shows exactly one tile — «הגדרות מסוף», group «הגדרות». Every app,
+  including the system app «אפליקציות» (app-management, which cannot be disabled), is gone from the
+  launcher. That tile set is precisely `platform-base/console/modules.yaml`, the console's FALLBACK
+  when `.generated/registry/console.modules.yaml` does not exist — so the console is drawing an
+  office with no compiled registry, and says nothing about it.
+description: |
+  area: console / compiled registries / deployment
+
+  ## Symptom (reported by the owner, screenshot, 2026-10-29)
+
+  Phone view of the FPG console. Header «הלשכה הדיגיטלית», sub-line «אפליקציה אחת מותקנת», one group
+  «הגדרות» with one tile «הגדרות מסוף» (icon: monitor). No «אפליקציות», no drive/mail/indox, no
+  «בינה», nothing from the office's enabled set. The bottom bar (בית / פתוחים / עוד) is intact.
+
+  Not verified from inside the office: the edge answers (`https://console.fpg.digital-office.co.il/
+  api/modules` → 302 to auth.fpg.digital-office.co.il), but the session that filed this has no
+  sign-in there. Everything below is read from the code and the screenshot; the server-side checks
+  are listed under Tasks.
+
+  ## Why the screen means "no compiled registry"
+
+  `platform-base/console/app.py` `_modules()`:
+
+      gen = os.path.join(GENERATED, "console.modules.yaml")     # /app/generated, mounted ro from
+      if os.path.exists(gen):                                    # ../../.generated/registry
+          ... compiled tiles + peers + _own_views()
+      return yaml.safe_load(open(os.path.join(ROOT, "modules.yaml"))) or []
+
+  `modules.yaml` holds one entry: `{id: settings, name: הגדרות מסוף, icon: monitor, group: הגדרות}`.
+  That is the screenshot, tile for tile.
+
+  The alternative — a compiled registry that exists but lists nothing — is ruled out by the missing
+  «אפליקציות» tile: app-management is layer-1 system (cannot be disabled) and declares
+  `routing[].module` `{id: apps, name: אפליקציות}`, so every render of `reconcile.py` (≈ line 2921)
+  writes it into `console.modules.yaml`. One tile means the file is absent (or empty) INSIDE the
+  container.
+
+  ## Likely cause (to confirm on the server)
+
+  The console mounts `../../.generated/registry:/app/generated:ro`
+  (`platform-base/console/docker-compose.yml:34`). If that source directory does not exist when the
+  container is created, Docker creates it EMPTY and the console starts against nothing. Ways to get
+  there: `.generated/` removed (a `git clean -x`, a reset), the stack brought up from a different
+  checkout than the one `bbox reconcile` renders into (e.g. a fresh clone of this repository beside
+  the old one), or the console recreated before the first successful render.
+
+  Note: the live build is NEWER than this repository — the sub-line «אפליקציה אחת מותקנת» does not
+  exist here (`static/app.js` renders `${MODULES.length} אפליקציות מותקנות`). The diagnosis rests on
+  `_modules()` and `modules.yaml`, which should be re-checked against the running image.
+
+  ## Why it is a defect, not only an ops slip
+
+  The console turns "my registry is missing" into a plausible-looking office with one app. A person
+  reads it as "the apps were uninstalled"; nothing on the screen, in `/api/modules` or in
+  `/api/version` says the compiled registry was never found. The fallback was meant for the
+  console's OWN views (modules.yaml's header says so) and is doing a second job: hiding a broken
+  mount.
+
+  ## Related: the tracked platform.state.yaml belongs to another office
+
+  `platform.state.default.yaml` says `platform.state.yaml` is the office's own runtime file, one per
+  deployment, never carried by git. In this repository it IS tracked, and it is another office's:
+  a `remote:` block for vps1 («שרת פיתוח בינה סלושנס», 10.79.2.2), drive/mail/indox/apitools
+  disabled `by: user`, computers/git/dgo-extend/digital-assets enabled `by: cli`. A clone or pull of
+  this repository on the FPG server puts that office's app set in place of FPG's. It does not by
+  itself produce the one-tile screen (app-management would still be listed), but it is the first
+  thing to check after the registry is restored.
+
+  ## Fix
+
+  Immediate (server): from the checkout the stack runs from, `./bbox reconcile` (or `./bbox run`),
+  then reload the console.
+
+  Code: when `/app/generated/console.modules.yaml` is missing, the console must say so — e.g. a
+  `registry: missing` field on `/api/modules` and `/api/version`, a visible card on the home screen
+  instead of a one-tile office, and a failing health check — rather than falling back to
+  `modules.yaml` as though it were the office.
+tasks:
+  - text: 'On the FPG server: `ls -la .generated/registry/console.modules.yaml` in the checkout the stack runs from'
+    done: false
+  - text: 'On the FPG server: `docker exec console-<DEPLOYMENT_NAME> ls -la /app/generated` — empty confirms the diagnosis'
+    done: false
+  - text: 'On the FPG server: `docker inspect console-<DEPLOYMENT_NAME>` mounts — is the registry source the checkout bbox renders into?'
+    done: false
+  - text: 'On the FPG server: compare platform.state.yaml with FPG''s intended app set (not the vps1 office''s)'
+    done: false
+  - text: 'Restore: `./bbox reconcile` from that checkout, reload, confirm «אפליקציות» and the office''s apps are back'
+    done: false
+  - text: 'Console: make a missing compiled registry visible (API field + home-screen card + health) instead of the silent modules.yaml fallback'
+    done: false
+  - text: 'Repository: stop tracking platform.state.yaml (it is per-office runtime, per platform.state.default.yaml)'
+    done: false
+references:
+  - platform-base/console/app.py
+  - platform-base/console/modules.yaml
+  - platform-base/console/docker-compose.yml
+  - platform-base/console/static/app.js
+  - platform/manager/reconcile.py
+  - platform-base/app-management/app.json
+  - platform.state.yaml
+  - platform.state.default.yaml
