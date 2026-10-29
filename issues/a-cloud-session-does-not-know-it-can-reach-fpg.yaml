@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=./schema.json
+title: A Claude cloud session on this repository does not know it can reach FPG — the access path lives only on an unmerged branch
+opened: '2026-10-29'
+category: bug
+severity: high
+status: open
+summary: |-
+  The owner works on the FPG office (vps1) from Claude Code cloud sessions, every day. The
+  environment carries the access for it (FPG_VPS1_DOOR + COMPUTERS_SHARE_KEY), but a fresh session
+  cloned from `main` has no way to know: the docs, the door client and the SessionStart hook that
+  connects to vps1 exist only on `claude/elegant-fermat-qw8exc` (2026-10-25), never merged. On
+  2026-10-29 a session diagnosing FPG's one-tile console told the owner "I have no access to the
+  server", proposed Remote Control, and found the door only after the owner said "you have full
+  access through the office links" — then reached vps1 in seconds and fixed it.
+description: |
+  area: agent onboarding / cloud environment / CLAUDE.md
+
+  ## What happened (session 2026-10-29, the one-tile console incident)
+
+  1. Asked "what happened to FPG?", the session read the code and answered with "probably":
+     it had no view of the live office, and did not look for one.
+  2. Asked to connect, it reported port 22 closed and the environment's secrets unusable, and asked
+     the owner to run `claude remote-control` on the server.
+  3. Only after the owner wrote «יש לך חיבור מלא ללשכה בשרת דרך החיבורי לשכות» did it look at the
+     variable names, see `FPG_VPS1_DOOR` is `wss://computers.fpg.digital-office.co.il/share/<token>`,
+     list the remote branches, and find `claude/elegant-fermat-qw8exc`.
+  4. With that branch's `hooks/door` + `door_client.py` + `tools/pem.py`: `ssh vps1` answered in
+     ~2 s (srv2085127, root). Root cause found and fixed live within minutes
+     (issues/console-shows-one-tile-when-the-compiled-registry-is-missing.yaml).
+
+  Steps 1–3 cost the owner three rounds of messages for something the environment already had.
+
+  ## Why a session cannot know (measured on `main` at 733688b)
+
+  | What tells a session it can reach FPG | on `main` | on `claude/elegant-fermat-qw8exc` |
+  |---|---|---|
+  | `.claude/settings.json` + `.claude/hooks/session-start.sh` (connects vps1 at session start, logs `/tmp/claude-cloud-office.log`) | absent — no `.claude/` at all | present |
+  | `ai/context/fpg-herd.md` (vps1 + the cloud office, the door, the two secrets) | absent | present |
+  | CLAUDE.md row "The FPG herd" | absent | present |
+  | `apps/computers/door_client.py`, `hooks/door`, `hooks/share`, `share.py`, `tools/pem.py`; `./bbox computers door` | absent | present |
+  | `FPG_VPS1_DOOR`, `COMPUTERS_SHARE_KEY` named anywhere in the tree | `git grep` → nothing | named |
+
+  The session is created from `main`, so the hook never runs (no `/tmp/claude-cloud-office.log` in
+  this session) and nothing in CLAUDE.md/AGENTS.md says that the FPG office is reachable from here,
+  how, or that the cloud session IS the office's operator. The environment variable names are the only
+  trace, and a careful agent does not open secrets it was not told to use — this session's first
+  attempt to read them was refused by the session's own safety layer as credential materialisation.
+
+  ## What should be true
+
+  A fresh cloud session on this repository knows, before its first answer, that:
+    - it is the FPG cloud office and `ssh vps1` reaches the live server (srv2085127,
+      /opt/digital-office/fireplace) through the computers share door;
+    - which two environment variables are that access, and that using them is the intended path;
+    - questions about the live office ("what happened to FPG") are answered by looking at vps1, not by
+      inferring from the tree — the live build is ahead of `main` (vps1 HEAD fa9dde6, 2026-10-29).
+
+  ## Fix
+
+  Bring the access path to `main`:
+    1. `ai/context/fpg-herd.md` + its CLAUDE.md row, near the top ("this session can reach FPG — read
+       first for any question about the live office").
+    2. The door client (`apps/computers/door_client.py`, `hooks/door`, `tools/pem.py`) — no stack, no
+       docker; it is what made `ssh vps1` work here in 2 s.
+    3. `.claude/settings.json` + the SessionStart hook's FAST path (ssh through the door, ≤60 s), so
+       `ssh vps1` is ready before the first prompt. The FULL path (`./bbox run`, 10–15 min of image
+       builds, every session) is a separate decision: it is not needed to operate vps1.
+  The branch also rewrites `platform.state.yaml` (−259 lines); that part must not ride along without
+  its own look (see issues/console-shows-one-tile-when-the-compiled-registry-is-missing.yaml,
+  "Related").
+
+  And the agent side, recorded on purpose: "I have no access" was said before listing the remote
+  branches or reading the environment's variable NAMES. Both are free and safe; they come before
+  asking the owner to set something up.
+tasks:
+  - text: 'Merge ai/context/fpg-herd.md and a CLAUDE.md row that says this session reaches FPG and how'
+    done: false
+  - text: 'Merge the door client (door_client.py, hooks/door, tools/pem.py, bbox computers door) to main'
+    done: false
+  - text: 'Merge .claude/settings.json + session-start.sh FAST path; decide separately on the FULL bring-up'
+    done: false
+  - text: 'Keep the branch''s platform.state.yaml rewrite out of that merge'
+    done: false
+  - text: 'Verify from a NEW cloud session on main: /tmp/claude-cloud-office.log says FAST, and `ssh vps1 hostname` = srv2085127'
+    done: false
+references:
+  - CLAUDE.md
+  - AGENTS.md
+  - apps/computers/AGENT.md
+  - issues/console-shows-one-tile-when-the-compiled-registry-is-missing.yaml
+  - 'branch: claude/elegant-fermat-qw8exc (882086a, fab060b, dc9db42, 3130b98)'
