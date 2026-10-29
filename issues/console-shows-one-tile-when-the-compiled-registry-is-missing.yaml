@@ -20,41 +20,33 @@ description: |
   «הגדרות» with one tile «הגדרות מסוף» (icon: monitor). No «אפליקציות», no drive/mail/indox, no
   «בינה», nothing from the office's enabled set. The bottom bar (בית / פתוחים / עוד) is intact.
 
-  Not verified from inside the office: the edge answers (`https://console.fpg.digital-office.co.il/
-  api/modules` → 302 to auth.fpg.digital-office.co.il), but the session that filed this has no
-  sign-in there. Everything below is read from the code and the screenshot; the server-side checks
-  are listed under Tasks.
+  ## Reproduced (2026-10-29, this repository, console app under Flask's test client)
 
-  ## Why the screen means "no compiled registry"
+      GENERATED_REGISTRY=<empty dir>                       GET /api/modules
+        -> [('הגדרות מסוף', 'הגדרות')]                                     <- the screenshot
+      GENERATED_REGISTRY=<dir with console.modules.yaml listing app-management>
+        -> [('אפליקציות', 'תשתית'), ('הגדרות מסוף', 'הגדרות')]
 
-  `platform-base/console/app.py` `_modules()`:
+  The one-tile office is what the console serves when `/app/generated/console.modules.yaml` is not
+  there. `platform-base/console/app.py` `_modules()` falls back to `modules.yaml`, whose only entry is
+  `{id: settings, name: הגדרות מסוף, group: הגדרות}`.
 
-      gen = os.path.join(GENERATED, "console.modules.yaml")     # /app/generated, mounted ro from
-      if os.path.exists(gen):                                    # ../../.generated/registry
-          ... compiled tiles + peers + _own_views()
-      return yaml.safe_load(open(os.path.join(ROOT, "modules.yaml"))) or []
+  A registry that exists but lists nothing cannot produce this screen: every render of
+  `reconcile.py` (≈ line 2921) writes app-management's tile «אפליקציות» (layer-1 system, cannot be
+  disabled). So on the FPG server the console container has no compiled registry.
 
-  `modules.yaml` holds one entry: `{id: settings, name: הגדרות מסוף, icon: monitor, group: הגדרות}`.
-  That is the screenshot, tile for tile.
+  ## Not yet known: why the file is absent on the FPG server
 
-  The alternative — a compiled registry that exists but lists nothing — is ruled out by the missing
-  «אפליקציות» tile: app-management is layer-1 system (cannot be disabled) and declares
-  `routing[].module` `{id: apps, name: אפליקציות}`, so every render of `reconcile.py` (≈ line 2921)
-  writes it into `console.modules.yaml`. One tile means the file is absent (or empty) INSIDE the
-  container.
+  Needs the server (this session has no access there: the edge answers
+  `console.fpg.digital-office.co.il/api/modules` with a 302 to authentik). The console mounts
+  `../../.generated/registry:/app/generated:ro` (`platform-base/console/docker-compose.yml:34`);
+  Docker creates a missing bind-mount source as an EMPTY directory, so any of these ends here:
+  `.generated/` removed, the stack brought up from a different checkout than the one
+  `bbox reconcile` renders into, or the console recreated before a successful render. The Tasks
+  below decide which one it was.
 
-  ## Likely cause (to confirm on the server)
-
-  The console mounts `../../.generated/registry:/app/generated:ro`
-  (`platform-base/console/docker-compose.yml:34`). If that source directory does not exist when the
-  container is created, Docker creates it EMPTY and the console starts against nothing. Ways to get
-  there: `.generated/` removed (a `git clean -x`, a reset), the stack brought up from a different
-  checkout than the one `bbox reconcile` renders into (e.g. a fresh clone of this repository beside
-  the old one), or the console recreated before the first successful render.
-
-  Note: the live build is NEWER than this repository — the sub-line «אפליקציה אחת מותקנת» does not
-  exist here (`static/app.js` renders `${MODULES.length} אפליקציות מותקנות`). The diagnosis rests on
-  `_modules()` and `modules.yaml`, which should be re-checked against the running image.
+  The live build is newer than this repository (its sub-line «אפליקציה אחת מותקנת» is not in
+  `static/app.js` here); `_modules()` and `modules.yaml` should be read in the running image too.
 
   ## Why it is a defect, not only an ops slip
 
