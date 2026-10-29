@@ -1,92 +1,103 @@
 # yaml-language-server: $schema=./schema.json
-title: The FPG office's home screen shows ONE tile («הגדרות מסוף») — the console silently falls back when its compiled registry is missing
+title: FPG's console showed ONE tile for 7 hours — a deploy's rollback replaced .generated/registry under four running bind mounts
 opened: '2026-10-29'
 category: bug
 severity: high
-status: open
+status: in-progress
 summary: |-
-  On the live FPG office (console.fpg.digital-office.co.il, phone, 2026-10-29 17:38) the home screen
-  reads «אפליקציה אחת מותקנת» and shows exactly one tile — «הגדרות מסוף», group «הגדרות». Every app,
-  including the system app «אפליקציות» (app-management, which cannot be disabled), is gone from the
-  launcher. That tile set is precisely `platform-base/console/modules.yaml`, the console's FALLBACK
-  when `.generated/registry/console.modules.yaml` does not exist — so the console is drawing an
-  office with no compiled registry, and says nothing about it.
+  From 2026-10-29 08:45:54Z until 15:47Z the FPG office (vps1, srv2085127) showed «אפליקציה אחת
+  מותקנת» — only the console's own «הגדרות מסוף». Every app was running and healthy. The CHAT-81
+  package's rollback (`find .generated -mindepth 1 -delete; tar -xzf …`) deleted
+  `.generated/registry` and extracted a NEW directory in its place; console, dgo-extend and computers
+  kept their bind mount on the deleted inode and saw an empty directory, and the console silently fell
+  back to modules.yaml. Fixed live by restarting those three containers (18 tiles back); the two
+  defects that let it happen are still open.
 description: |
-  area: console / compiled registries / deployment
+  area: console / compiled registries / deploy packages
 
-  ## Symptom (reported by the owner, screenshot, 2026-10-29)
+  ## Symptom (owner, phone, 2026-10-29 17:38 local)
 
-  Phone view of the FPG console. Header «הלשכה הדיגיטלית», sub-line «אפליקציה אחת מותקנת», one group
-  «הגדרות» with one tile «הגדרות מסוף» (icon: monitor). No «אפליקציות», no drive/mail/indox, no
-  «בינה», nothing from the office's enabled set. The bottom bar (בית / פתוחים / עוד) is intact.
+  Home screen: «הלשכה הדיגיטלית», «אפליקציה אחת מותקנת», one group «הגדרות» with one tile «הגדרות מסוף».
 
-  ## Reproduced (2026-10-29, this repository, console app under Flask's test client)
+  ## Measured on vps1 (2026-10-29 ~15:45Z, through the computers share door)
 
-      GENERATED_REGISTRY=<empty dir>                       GET /api/modules
-        -> [('הגדרות מסוף', 'הגדרות')]                                     <- the screenshot
-      GENERATED_REGISTRY=<dir with console.modules.yaml listing app-management>
-        -> [('אפליקציות', 'תשתית'), ('הגדרות מסוף', 'הגדרות')]
+  All 60 containers up; the apps were never down. Only the console's view of them was:
 
-  The one-tile office is what the console serves when `/app/generated/console.modules.yaml` is not
-  there. `platform-base/console/app.py` `_modules()` falls back to `modules.yaml`, whose only entry is
-  `{id: settings, name: הגדרות מסוף, group: הגדרות}`.
+      host:      /opt/digital-office/fireplace/.generated/registry   inode 300901, 8 files,
+                 console.modules.yaml 3681 bytes (written 08:46:05Z)
+      console:   ls /app/generated                         -> (empty)
+                 GET /api/modules                          -> 1 ['הגדרות מסוף']
+                 /proc/<pid>/mountinfo                     -> /opt/digital-office/fireplace/.generated/registry//deleted /app/generated
+                 stat /app/generated                       -> inode 262223 (the old, deleted directory)
 
-  A registry that exists but lists nothing cannot produce this screen: every render of
-  `reconcile.py` (≈ line 2921) writes app-management's tile «אפליקציות» (layer-1 system, cannot be
-  disabled). So on the FPG server the console container has no compiled registry.
+  Same `//deleted` mount in `dgo-extend-fireplace` (/registry — its office.apps.json, the catalog
+  linked offices read) and `computers-fireplace` (/registry). `connections-fireplace` was created
+  before the replacement too but showed the live path — re-checked after the fix, no container has a
+  deleted mount.
 
-  ## Not yet known: why the file is absent on the FPG server
+  ## Root cause
 
-  Needs the server (this session has no access there: the edge answers
-  `console.fpg.digital-office.co.il/api/modules` with a 302 to authentik). The console mounts
-  `../../.generated/registry:/app/generated:ro` (`platform-base/console/docker-compose.yml:34`);
-  Docker creates a missing bind-mount source as an EMPTY directory, so any of these ends here:
-  `.generated/` removed, the stack brought up from a different checkout than the one
-  `bbox reconcile` renders into, or the console recreated before a successful render. The Tasks
-  below decide which one it was.
+  Every entry of `.generated/` got ctime 2026-10-29 08:45:54Z, and `registry` a NEW inode whose mtime
+  is the tarball's (2026-10-22 13:43:18.000). That second is the CHAT-81 package
+  (`/root/stage-r4-platform2-20261029T084348Z/CHAT-81/`, "the recorder tile shows its mic"):
 
-  The live build is newer than this repository (its sub-line «אפליקציה אחת מותקנת» is not in
-  `static/app.js` here); `_modules()` and `modules.yaml` should be read in the running image too.
+      deploy.sh   08:45:53  tar .generated -> generated-before-…084553Z.tgz; reconcile.py render;
+                            the render changed something outside the registry -> restore()
+      rollback.sh           find "$R/.generated" -mindepth 1 -delete      <- deletes registry/ itself
+                            tar -C "$R" -xzf "$B"                          <- a NEW registry/ directory
+      deploy.sh   08:46:05  ran again, rendered into the new directory, DONE
 
-  ## Why it is a defect, not only an ops slip
+  A bind mount pins the directory INODE it was started with, not the path. deploy.sh's own header
+  says "The console reads the registry through its bind mount … no container touched" — true for a
+  file rewritten in place, false for a directory deleted and recreated. The console then did what
+  `_modules()` does when `console.modules.yaml` is absent: served `modules.yaml` (one tile) with 200
+  and a healthy healthcheck, so nothing flagged it for seven hours.
 
-  The console turns "my registry is missing" into a plausible-looking office with one app. A person
-  reads it as "the apps were uninstalled"; nothing on the screen, in `/api/modules` or in
-  `/api/version` says the compiled registry was never found. The fallback was meant for the
-  console's OWN views (modules.yaml's header says so) and is doing a second job: hiding a broken
-  mount.
+  Reproduced in this repository: the console app with `GENERATED_REGISTRY=<empty dir>` returns
+  exactly `[('הגדרות מסוף', 'הגדרות')]`; with a compiled registry it adds «אפליקציות».
 
-  ## Related: the tracked platform.state.yaml belongs to another office
+  Same family as ai/context/symlinked-repo-root-empty-bind-mount.md (2026-10-01): a registry bind
+  mount that lands on an empty directory while the container stays healthy.
 
-  `platform.state.default.yaml` says `platform.state.yaml` is the office's own runtime file, one per
-  deployment, never carried by git. In this repository it IS tracked, and it is another office's:
-  a `remote:` block for vps1 («שרת פיתוח בינה סלושנס», 10.79.2.2), drive/mail/indox/apitools
-  disabled `by: user`, computers/git/dgo-extend/digital-assets enabled `by: cli`. A clone or pull of
-  this repository on the FPG server puts that office's app set in place of FPG's. It does not by
-  itself produce the one-tile screen (app-management would still be listed), but it is the first
-  thing to check after the registry is restored.
+  ## Fix applied (2026-10-29 15:47–15:51Z, vps1)
 
-  ## Fix
+  `./scripts/dc restart console`, `… dgo-extend`, `… computers` — a start re-resolves the bind source
+  by path. No recreate, no compose change, no data touched. After:
 
-  Immediate (server): from the checkout the stack runs from, `./bbox reconcile` (or `./bbox run`),
-  then reload the console.
+      console    /api/modules -> 18 tiles (בינה ודעת, קבצים, הקלטות, מייל, … אפליקציות, … n8n); healthy
+      dgo-extend /registry 8 files, no deleted mount; healthy
+      computers  /registry 8 files, no deleted mount; healthy
+      scan of every running container: no `//deleted` mount left
 
-  Code: when `/app/generated/console.modules.yaml` is missing, the console must say so — e.g. a
-  `registry: missing` field on `/api/modules` and `/api/version`, a visible card on the home screen
-  instead of a one-tile office, and a failing health check — rather than falling back to
-  `modules.yaml` as though it were the office.
+  ## Still open — why it can happen again
+
+  1. Any restore that deletes and re-creates `.generated/registry` (the CHAT-81 rollback pattern, a
+     `git clean -x`, an rm -rf + render) blinds every container mounting it. Either mount the parent
+     `.generated` (whose inode a contents-restore keeps), or make restores write INTO the existing
+     directory (`tar --overwrite` without deleting the directory itself), or restart the mounting
+     services as the last step of any `.generated` restore.
+  2. The console cannot tell "no compiled registry" from "an office with one app". A missing
+     `/app/generated/console.modules.yaml` should fail the healthcheck and show a card, not a
+     plausible one-tile office.
+
+  ## Related: the tracked platform.state.yaml in this repository belongs to another office
+
+  `platform.state.default.yaml` says `platform.state.yaml` is per-office runtime, never carried by
+  git; here it is tracked and carries a `remote:` block for vps1 and another office's app set. Not the
+  cause of this incident (FPG's own file is untouched, 7796 bytes, 2026-10-28), but a clone or pull on
+  an office would put it in place.
 tasks:
-  - text: 'On the FPG server: `ls -la .generated/registry/console.modules.yaml` in the checkout the stack runs from'
+  - text: 'Prove on vps1: host registry has 8 files, console sees 0, mountinfo says //deleted'
+    done: true
+  - text: 'Find what replaced the directory: CHAT-81 rollback.sh at 08:45:54Z'
+    done: true
+  - text: 'Restart console, dgo-extend, computers; /api/modules = 18; no deleted mount on any container'
+    done: true
+  - text: 'Make a .generated restore safe for running bind mounts (mount the parent, restore in place, or restart the mounters)'
     done: false
-  - text: 'On the FPG server: `docker exec console-<DEPLOYMENT_NAME> ls -la /app/generated` — empty confirms the diagnosis'
+  - text: 'Console: a missing compiled registry fails health and says so, instead of the silent modules.yaml fallback'
     done: false
-  - text: 'On the FPG server: `docker inspect console-<DEPLOYMENT_NAME>` mounts — is the registry source the checkout bbox renders into?'
-    done: false
-  - text: 'On the FPG server: compare platform.state.yaml with FPG''s intended app set (not the vps1 office''s)'
-    done: false
-  - text: 'Restore: `./bbox reconcile` from that checkout, reload, confirm «אפליקציות» and the office''s apps are back'
-    done: false
-  - text: 'Console: make a missing compiled registry visible (API field + home-screen card + health) instead of the silent modules.yaml fallback'
+  - text: 'Fix the CHAT-81 rollback.sh pattern in the deploy-package template (do not delete registry/ itself)'
     done: false
   - text: 'Repository: stop tracking platform.state.yaml (it is per-office runtime, per platform.state.default.yaml)'
     done: false
@@ -94,8 +105,9 @@ references:
   - platform-base/console/app.py
   - platform-base/console/modules.yaml
   - platform-base/console/docker-compose.yml
-  - platform-base/console/static/app.js
+  - apps/dgo-extend/docker-compose.yml
+  - apps/computers/docker-compose.yml
   - platform/manager/reconcile.py
-  - platform-base/app-management/app.json
+  - ai/context/symlinked-repo-root-empty-bind-mount.md
   - platform.state.yaml
   - platform.state.default.yaml
