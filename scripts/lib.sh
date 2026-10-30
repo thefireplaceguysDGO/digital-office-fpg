@@ -1123,7 +1123,9 @@ ccr_shadow_bases() {
       # straight at the copied CA file (NODE_EXTRA_CA_CERTS is additive over the built-in roots).
       printf 'FROM %s\nCOPY ccr-ca.crt %s\nENV NODE_EXTRA_CA_CERTS=%s SSL_CERT_FILE=%s npm_config_cafile=%s GIT_SSL_CAINFO=%s CURL_CA_BUNDLE=%s\nUSER node\n' "$b" "$RAW" "$RAW" "$RAW" "$RAW" "$RAW" "$RAW" > "${sdir}/Dockerfile"
     else
-      printf 'FROM %s\nCOPY ccr-ca.crt %s\n%s\nRUN command -v update-ca-certificates >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*); cat %s >> %s 2>/dev/null || true; update-ca-certificates 2>/dev/null || true\n%s\n' "$b" "$RAW" "$CCR_APT_HTTPS_RUN" "$RAW" "$CAP" "$ENVS" > "${sdir}/Dockerfile"
+      # A base with no ca-certificates (node:*-slim) has no roots, so apt over https cannot verify
+      # the proxy it must cross to install them: apt is pointed at the copied CA for that one install.
+      printf 'FROM %s\nCOPY ccr-ca.crt %s\n%s\nRUN command -v update-ca-certificates >/dev/null 2>&1 || (apt-get -o Acquire::https::CAInfo=%s update && apt-get -o Acquire::https::CAInfo=%s install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*); cat %s >> %s 2>/dev/null || true; update-ca-certificates 2>/dev/null || true\n%s\n' "$b" "$RAW" "$CCR_APT_HTTPS_RUN" "$RAW" "$RAW" "$RAW" "$CAP" "$ENVS" > "${sdir}/Dockerfile"
     fi
     # shellcheck disable=SC2046,SC2086 — proxy flags are intentionally word-split; empty off-cloud.
     docker build $(ccr_proxy_build_flags) -q -t "$b" -f "${sdir}/Dockerfile" "${sdir}" >/dev/null 2>&1 && { n=$((n+1)); } || warn "shadow build failed for ${b}"
