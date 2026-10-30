@@ -1,0 +1,20 @@
+# apps/project-pln/plans/fpg-cloud-session-1030.yaml — what a cloud agent session on the FPG repository found on
+# 2026-10-30, opened on the owner's word «תדווח בג». Applied on FPG's vps1 with
+# `./bbox project-pln plan <this file> --only <key>` (upsert, never delete). Keys are stable identities: never re-key.
+project: { identifier: FPG }
+
+modules:
+- key: cloud-session-1030
+  name: "Cloud session 2026-10-30 · a fresh agent on the FPG repository"
+  status: in-progress
+  description: "What a fresh Claude cloud session on thefireplaceguysdgo/digital-office-fpg found while getting to FPG."
+  items:
+  - key: cs1030-fresh-session-does-not-reach-fpg
+    name: "Claude bug: a fresh cloud session did not know by itself to raise the office and connect to the FPG office"
+    priority: urgent
+    description: |
+      The owner's words (2026-10-30, cloud session on branch claude/confident-mendel-j9hj86): «קדימה». The agent found no task in the conversation, compared the branch with main and asked the owner what to do (a menu of four options) — rule 1 of AGENTS.md broken. The owner: «תדווח בג על זה שלא הבנת לבד שצריך להרים לישכה ולהתחבר ללישכת FPG כדי שתוכל להתקדם בכל מה שצריך ב FPG», and then «מה ??? למה אתה מסתבך תריץ לשכה ותתחבר ללשכה המרוחקת של fpg יש לך מה שצריך ב env».
+      What the environment already held, unread: FPG_VPS1_DOOR (wss://computers.fpg.digital-office.co.il/share/… — SSH over a WebSocket, OpenSSH on vps1) and COMPUTERS_SHARE_KEY (an ed25519 key, claude-cloud-office@fpg, that logs in as root). With them the session reaches vps1 and its Plane in one step.
+      Root: nothing an agent reads on entry (CLAUDE.md, AGENTS.md of the FPG repository) says that a session on this repository starts by `./bbox run` and then connecting to FPG through FPG_VPS1_DOOR with COMPUTERS_SHARE_KEY, and takes its work from FPG's Plane. No document names those two variables; the session never listed its environment.
+      Also found on the way, fixed on the branch: in the cloud sandbox `bina-ds` could not build (node:*-slim has no ca-certificates, so apt could not cross the proxy to install them — scripts/lib.sh), and Docker Hub answered 429 for traefik and supabase/postgres (bbox's own dockerd now pulls through mirror.gcr.io).
+      Done when: CLAUDE.md of the FPG repository says, at its top, run → connect through FPG_VPS1_DOOR/COMPUTERS_SHARE_KEY → work from FPG's Plane, with the ProxyCommand that bridges the door; and a fresh cloud session given only «קדימה» reaches vps1 and picks up open FPG work without asking.
