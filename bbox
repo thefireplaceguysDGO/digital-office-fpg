@@ -112,11 +112,15 @@ ensure_project_engine() {
   # after the invoking shell went away, and took all 37 containers down with it — cleanly, as
   # `Exited (0)`, which reads like somebody ran `bbox stop`. Any environment where this runs
   # detached from a login shell has the same exposure.
+  #
+  # Docker Hub pulls go through Google's pull-through mirror first (docker falls back to the Hub on
+  # a miss). A cloud sandbox shares its egress address, and the Hub's anonymous limit answered
+  # `429 Too Many Requests` for traefik:v3.3 and supabase/postgres on a fresh bring-up (2026-10-30).
   say "no docker daemon — starting dockerd on ${sock} (DOCKER_MIN_API_VERSION=1.24)…"
   if command -v setsid >/dev/null 2>&1; then
-    ${sudo} setsid env DOCKER_MIN_API_VERSION=1.24 dockerd -H "unix://${sock}" -H unix:///var/run/docker.sock >"${BBOX_TMP:-/tmp}/dockerd.log" 2>&1 </dev/null &
+    ${sudo} setsid env DOCKER_MIN_API_VERSION=1.24 dockerd -H "unix://${sock}" -H unix:///var/run/docker.sock --registry-mirror https://mirror.gcr.io >"${BBOX_TMP:-/tmp}/dockerd.log" 2>&1 </dev/null &
   else
-    ${sudo} env DOCKER_MIN_API_VERSION=1.24 nohup dockerd -H "unix://${sock}" -H unix:///var/run/docker.sock >"${BBOX_TMP:-/tmp}/dockerd.log" 2>&1 &
+    ${sudo} env DOCKER_MIN_API_VERSION=1.24 nohup dockerd -H "unix://${sock}" -H unix:///var/run/docker.sock --registry-mirror https://mirror.gcr.io >"${BBOX_TMP:-/tmp}/dockerd.log" 2>&1 &
   fi
   for _ in $(seq 1 30); do [ -S "${sock}" ] && break; sleep 1; done
 }
