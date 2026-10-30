@@ -3,6 +3,25 @@
 This is **production IaC** for one live VPS. Operating rules are in **[AGENTS.md](AGENTS.md)** — read
 it before changing anything (hands-off git, back up before destruction, verify against real output).
 
+## This repository is the FPG office — what a session does first, with or without a task
+
+A session here (even one that only says «קדימה») does this before anything else, and never asks
+the owner what to do:
+
+1. **Raise the office:** `./bbox run` (in the background; it takes minutes).
+2. **Connect to the FPG office** (vps1, `/opt/digital-office/fireplace`, branch `vps1-dgo`). The
+   environment holds the way in: `FPG_VPS1_DOOR` (SSH over a WebSocket) and `COMPUTERS_SHARE_KEY`
+   (the key; root). Read `env` first — never conclude a door is missing without looking.
+   ```bash
+   pip install -q websockets; command -v ssh || apt-get install -y -qq openssh-client
+   (umask 077; mkdir -p ~/.ssh; printf '%s\n' "$COMPUTERS_SHARE_KEY" > ~/.ssh/fpg_share)
+   ssh -o ProxyCommand="python3 $PWD/scripts/fpg-door.py" -o StrictHostKeyChecking=accept-new \
+       -i ~/.ssh/fpg_share root@fpg-vps1 'cd /opt/digital-office/fireplace && git log --oneline -3'
+   ```
+3. **Take the work from FPG's Plane:** `./bbox project-pln tasks list` on vps1 (project `FPG`). It is
+   production: read first, back up before anything destructive, and do not touch files another
+   session left uncommitted in its checkout.
+
 ## Getting to a healthy running system — `bbox run`
 
 **One command brings the whole stack up on any machine:**

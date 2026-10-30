@@ -3,7 +3,7 @@ title: "A fresh agent session in the FPG repository does not know, by itself, th
 opened: 2026-10-30
 category: bug
 severity: high
-status: open
+status: in-progress
 summary: "The owner opened a cloud session on `thefireplaceguysdgo/digital-office-fpg` and said «קדימה». The agent found no task, compared the branch with `main`, and asked the owner what to do (a menu: bring up the stack / baseline / sim QA / describe the task) — breaking standing rule 1 (no menus, never hand work back). The owner's answer: «תדווח בג על זה שלא הבנת לבד שצריך להרים לישכה ולהתחבר ללישכת FPG כדי שתוכל להתקדם בכל מה שצריך ב FPG». Root: nothing an agent reads on entry (CLAUDE.md, AGENTS.md) says that this checkout IS the FPG line, that a session here starts by `./bbox run` and then pairing the new office with the FPG office (`/connect`, `apps/dgo-extend/pair_api.py`), or that every FPG task is reached THROUGH that link (the hub, the apps, the data). CLAUDE.md frames `bbox run` as \"then run your task\" — so with no task named, the agent had no default and stopped."
 description: |
   ## What happened (2026-10-30, cloud session, branch `claude/confident-mendel-j9hj86` = `main`)
@@ -30,7 +30,18 @@ description: |
   * The agent therefore treated "no task in the conversation" as "no task", when on this line it
     means "raise the office, link it to FPG, and take the work from there".
 
-  ## What the fix should be (proposal — a plan, not yet applied)
+  ## The real root (found after the owner's second message, «יש לך מה שצריך ב env»)
+
+  The way in was already in the session's environment and the agent never listed it:
+  `FPG_VPS1_DOOR` (`wss://computers.fpg.digital-office.co.il/share/…` — SSH over a WebSocket,
+  OpenSSH on vps1) and `COMPUTERS_SHARE_KEY` (ed25519, `claude-cloud-office@fpg`, root). With them
+  the session reached vps1 (`/opt/digital-office/fireplace`, branch `vps1-dgo`) and its Plane in one
+  step — no pairing was needed. The pairing route described below was the wrong guess.
+  Opened in FPG's hub as **FPG-558**. Fixed: CLAUDE.md now starts with run → connect → Plane, and
+  `scripts/fpg-door.py` is the ProxyCommand that bridges the door (measured: the documented
+  sequence, run from scratch, prints vps1's HEAD).
+
+  ## What the fix should be (the first proposal — superseded by the section above)
 
   * **CLAUDE.md, top of "start here"**: on the FPG line a session's default, with or without a
     named task, is (1) `./bbox run`, (2) pair this office with the FPG office from `/connect`
@@ -50,10 +61,10 @@ description: |
   the office and starts the pairing with FPG. Actual (today): it asks what to do.
 
 tasks:
-  - text: "Raise the office in this cloud session (`./bbox run`) and start the pairing with the FPG office from this side (offer)"
-    done: false
-  - text: "Write the FPG office's identity and the session's default sequence (run → pair → hub) at the top of CLAUDE.md"
-    done: false
+  - text: "Raise the office in this cloud session (`./bbox run`) and connect to FPG through FPG_VPS1_DOOR / COMPUTERS_SHARE_KEY"
+    done: true
+  - text: "Write the session's default sequence (run → connect through the door → FPG's Plane) at the top of CLAUDE.md"
+    done: true
   - text: "Prove it: a fresh session given only «קדימה» reaches a paired office without asking"
     done: false
 
